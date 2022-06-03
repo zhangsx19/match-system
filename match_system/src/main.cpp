@@ -3,18 +3,26 @@
 #include <thrift/server/TSimpleServer.h>
 #include <thrift/transport/TServerSocket.h>
 #include <thrift/transport/TBufferTransports.h>
+
 #include <iostream>
 #include <thread>
 #include <mutex>
 #include <condition_variable>
 #include <queue>
 #include <vector>
+
+#include "save_client/Save.h"
+#include <thrift/transport/TTransportUtils.h>
+#include <thrift/transport/TSocket.h>
+
 using namespace ::apache::thrift;
 using namespace ::apache::thrift::protocol;
 using namespace ::apache::thrift::transport;
 using namespace ::apache::thrift::server;
 
 using namespace  ::match_service;
+using namespace  ::save_service;
+
 using namespace std;
 
 struct Task
@@ -30,73 +38,90 @@ struct MessageQueue
 }message_queue;
 
 class MatchHandler : virtual public MatchIf {
- public:
-  MatchHandler() {
-    // Your initialization goes here
-  }
+    public:
+        MatchHandler() {
+            // Your initialization goes here
+        }
 
-  /**
-   * user: 添加的用户信息
-   * info: 附加信息
-   * 在匹配池中添加一个名用户
-   * 
-   * @param user
-   * @param info
-   */
-  int32_t add_user(const User& user, const std::string& info) {
-    // Your implementation goes here
-    printf("add_user\n");
-    unique_lock<mutex> lck(message_queue.m);//无需显式解锁，局部变量注销即解锁
-    message_queue.q.push({user,"add"});
-    message_queue.cv.notify_all();
-    return 0;
-  }
+        /**
+         * user: 添加的用户信息
+         * info: 附加信息
+         * 在匹配池中添加一个名用户
+         * 
+         * @param user
+         * @param info
+         */
+        int32_t add_user(const User& user, const std::string& info) {
+            // Your implementation goes here
+            printf("add_user\n");
+            unique_lock<mutex> lck(message_queue.m);//无需显式解锁，局部变量注销即解锁
+            message_queue.q.push({user,"add"});
+            message_queue.cv.notify_all();
+            return 0;
+        }
 
-  /**
-   * user: 删除的用户信息
-   * info: 附加信息
-   * 从匹配池中删除一名用户
-   * 
-   * @param user
-   * @param info
-   */
-  int32_t remove_user(const User& user, const std::string& info) {
-    // Your implementation goes here
-    printf("remove_user\n");
-    unique_lock<mutex> lck(message_queue.m);//无需显式解锁，局部变量注销即解锁
-    message_queue.q.push({user,"remove"});
-    message_queue.cv.notify_all();
-    return 0;
-  }
+        /**
+         * user: 删除的用户信息
+         * info: 附加信息
+         * 从匹配池中删除一名用户
+         * 
+         * @param user
+         * @param info
+         */
+        int32_t remove_user(const User& user, const std::string& info) {
+            // Your implementation goes here
+            printf("remove_user\n");
+            unique_lock<mutex> lck(message_queue.m);//无需显式解锁，局部变量注销即解锁
+            message_queue.q.push({user,"remove"});
+            message_queue.cv.notify_all();
+            return 0;
+        }
 
 };
 class Pool
 {
-public:
-    void add(User user){
-        users.push_back(user);
-    }
-    void remove(User user){
-        for(uint32_t i = 0;i<users.size();i++){
-            if(users[i].id == user.id){
-                users.erase(users.begin()+i);
-                break;
+    public:
+        void add(User user){
+            users.push_back(user);
+        }
+        void remove(User user){
+            for(uint32_t i = 0;i<users.size();i++){
+                if(users[i].id == user.id){
+                    users.erase(users.begin()+i);
+                    break;
+                }
             }
         }
-    }
-    void match(){
-        while(users.size()>1){
-            auto a = users[0],b = users[1];
-            save_result(a.id,b.id);
-            users.erase(users.begin()+1);
-            users.erase(users.begin());
+        void match(){
+            while(users.size()>1){
+                auto a = users[0],b = users[1];
+                save_result(a.id,b.id);
+                users.erase(users.begin()+1);
+                users.erase(users.begin());
+            }
         }
-    }
-    void save_result(int a,int b){//传入两个id
-        printf("Match Result: %d %d\n",a,b);
-    }
-private:
-    vector<User> users;
+        void save_result(int a,int b){//传入两个id
+            printf("Match Result: %d %d\n",a,b);
+
+            std::shared_ptr<TTransport> socket(new TSocket("123.57.47.211", 9090));
+            std::shared_ptr<TTransport> transport(new TBufferedTransport(socket));
+            std::shared_ptr<TProtocol> protocol(new TBinaryProtocol(transport));
+            SaveClient client(protocol);
+
+            try {
+                transport->open();
+
+                int res = client.save_data("acs_5622","2b365dc9",a,b);
+                if(!res) puts("success!");
+                else puts("failed");
+
+                transport->close();
+            } catch (TException& tx) {
+                cout << "ERROR: " << tx.what() << endl;
+            }
+        }
+    private:
+        vector<User> users;
 }pool;
 void consume_task(){
     while(true){
@@ -120,19 +145,19 @@ void consume_task(){
     }
 }
 int main(int argc, char **argv) {
-  int port = 9090;
-  ::std::shared_ptr<MatchHandler> handler(new MatchHandler());
-  ::std::shared_ptr<TProcessor> processor(new MatchProcessor(handler));
-  ::std::shared_ptr<TServerTransport> serverTransport(new TServerSocket(port));
-  ::std::shared_ptr<TTransportFactory> transportFactory(new TBufferedTransportFactory());
-  ::std::shared_ptr<TProtocolFactory> protocolFactory(new TBinaryProtocolFactory());
+    int port = 9090;
+    ::std::shared_ptr<MatchHandler> handler(new MatchHandler());
+    ::std::shared_ptr<TProcessor> processor(new MatchProcessor(handler));
+    ::std::shared_ptr<TServerTransport> serverTransport(new TServerSocket(port));
+    ::std::shared_ptr<TTransportFactory> transportFactory(new TBufferedTransportFactory());
+    ::std::shared_ptr<TProtocolFactory> protocolFactory(new TBinaryProtocolFactory());
 
-  TSimpleServer server(processor, serverTransport, transportFactory, protocolFactory);
-  cout<<"start match server"<<endl;
+    TSimpleServer server(processor, serverTransport, transportFactory, protocolFactory);
+    cout<<"start match server"<<endl;
 
-  thread matching_thread(consume_task);//死循环，单独分配线程
+    thread matching_thread(consume_task);//死循环，单独分配线程
 
-  server.serve();
-  return 0;
+    server.serve();
+    return 0;
 }
 
