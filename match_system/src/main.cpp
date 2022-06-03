@@ -10,6 +10,7 @@
 #include <condition_variable>
 #include <queue>
 #include <vector>
+#include <unistd.h>
 
 #include "save_client/Save.h"
 #include <thrift/transport/TTransportUtils.h>
@@ -94,10 +95,21 @@ class Pool
         }
         void match(){
             while(users.size()>1){
-                auto a = users[0],b = users[1];
-                save_result(a.id,b.id);
-                users.erase(users.begin()+1);
-                users.erase(users.begin());
+                sort(users.begin(),users.end(),[&](User &a,User &b){
+                        return a.score < b.score;
+                });
+                bool flag = true;
+                for(uint32_t i=1;i<users.size();i++){
+                    auto a = users[i-1],b = users[i];
+                    if(b.score-a.score <= 50){
+                        users.erase(users.begin()+i-1,users.begin()+i+1);
+                        save_result(a.id,b.id);
+                        flag = false;
+                        break;
+                    }
+                }
+                if(flag)break;
+
             }
         }
         void save_result(int a,int b){//传入两个id
@@ -123,11 +135,15 @@ class Pool
     private:
         vector<User> users;
 }pool;
+
 void consume_task(){
     while(true){
         unique_lock<mutex> lck(message_queue.m);//循环完一次会解锁再获得锁
         if(message_queue.q.empty()){
-            message_queue.cv.wait(lck);
+            //message_queue.cv.wait(lck);
+            lck.unlock();
+            pool.match();
+            sleep(1);//每秒匹配1次
         }
         else{
             auto task = message_queue.q.front();
