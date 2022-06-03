@@ -91,12 +91,12 @@ class MatchCloneFactory : virtual public MatchIfFactory {
         {
             std::shared_ptr<TSocket> sock = std::dynamic_pointer_cast<TSocket>(connInfo.transport);
             /*
-            cout << "Incoming connection\n";//来的transport的IP
-            cout << "\tSocketInfo: "  << sock->getSocketInfo() << "\n";
-            cout << "\tPeerHost: "    << sock->getPeerHost() << "\n";
-            cout << "\tPeerAddress: " << sock->getPeerAddress() << "\n";
-            cout << "\tPeerPort: "    << sock->getPeerPort() << "\n";
-            */
+               cout << "Incoming connection\n";//来的transport的IP
+               cout << "\tSocketInfo: "  << sock->getSocketInfo() << "\n";
+               cout << "\tPeerHost: "    << sock->getPeerHost() << "\n";
+               cout << "\tPeerAddress: " << sock->getPeerAddress() << "\n";
+               cout << "\tPeerPort: "    << sock->getPeerPort() << "\n";
+               */
             return new MatchHandler;
         }
         void releaseHandler(MatchIf* handler) override {
@@ -109,29 +109,45 @@ class Pool
     public:
         void add(User user){
             users.push_back(user);
+            wt.push_back(0);//新进来的初始化等待时间为0
         }
         void remove(User user){
             for(uint32_t i = 0;i<users.size();i++){
                 if(users[i].id == user.id){
                     users.erase(users.begin()+i);
+                    wt.erase(wt.begin()+i);
                     break;
                 }
             }
         }
+        bool check_match(uint32_t i,uint32_t j){
+            auto a = users[i],b = users[j];//注意a，b要能互相匹配
+            int ds = abs(a.score-b.score);
+            int a_max_dif = wt[i]*50,b_max_dif = wt[j]*50;
+            //cout<<"ds:"<<ds<<" "<<"a:"<<a_max_dif<<" "<<"b:"<<b_max_dif<<endl;
+            return ds<=a_max_dif&&ds<=b_max_dif;
+
+        }
         void match(){
+            for(uint32_t i = 0;i<wt.size();i++){
+                wt[i]++;
+            }
             while(users.size()>1){
-                sort(users.begin(),users.end(),[&](User &a,User &b){
-                        return a.score < b.score;
-                        });
                 bool flag = true;
-                for(uint32_t i=1;i<users.size();i++){
-                    auto a = users[i-1],b = users[i];
-                    if(b.score-a.score <= 50){
-                        users.erase(users.begin()+i-1,users.begin()+i+1);
-                        save_result(a.id,b.id);
-                        flag = false;
-                        break;
+                for(uint32_t i=0;i<users.size();i++){
+                    for(uint32_t j=i+1;j<users.size();j++){
+                        if(check_match(i,j)){
+                            auto a = users[i],b = users[j];
+                            users.erase(users.begin()+j);//注意先删后面那个
+                            wt.erase(wt.begin()+j);
+                            users.erase(users.begin()+i);
+                            wt.erase(wt.begin()+i);
+                            save_result(a.id,b.id);
+                            flag = false;
+                            break;
+                        }
                     }
+                    if(!flag)break;//只需匹配一次
                 }
                 if(flag)break;
 
@@ -159,6 +175,7 @@ class Pool
         }
     private:
         vector<User> users;
+        vector<int> wt;//等待时间，单位秒
 }pool;
 
 
@@ -182,7 +199,6 @@ void consume_task(){
             else if(task.type == "remove"){
                 pool.remove(task.user);
             }
-            pool.match();
         }
     }
 }
