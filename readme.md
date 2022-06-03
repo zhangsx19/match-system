@@ -1,3 +1,1 @@
-#### Linux基础课
-
-#### 6. thrift教程
+# 用apache thrift实现的游戏匹配系统
